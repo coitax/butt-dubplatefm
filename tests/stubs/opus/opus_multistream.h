@@ -1,0 +1,3 @@
+#ifndef OPUS_OPUS_MULTISTREAM_H
+#define OPUS_OPUS_MULTISTREAM_H
+#endif
