@@ -271,6 +271,29 @@ int cfg_write_file(char *path)
     return 0;
 }
 
+// Counts the entries strtok(list, ";") yields; empty entries are skipped the same way.
+// Returns 0 if the count does not fit in an int, so it never matches a positive declared count.
+static int cfg_count_list_entries(const char *list)
+{
+    int count = 0;
+    bool in_entry = false;
+
+    for(; *list != '\0'; list++)
+    {
+        if(*list == ';')
+            in_entry = false;
+        else if(!in_entry)
+        {
+            if(count == INT_MAX)
+                return 0;
+            in_entry = true;
+            count++;
+        }
+    }
+
+    return count;
+}
+
 int cfg_set_values(char *path)
 {
     int i;
@@ -396,6 +419,12 @@ int cfg_set_values(char *path)
             exit(1);
         }
 
+        if(cfg_count_list_entries(cfg.main.srv_ent) != cfg.main.num_of_srv)
+        {
+            fl_alert("%s", _("error while parsing config. The number of main/srv_ent entries does not match num_of_srv.\nbutt is going to close now"));
+            exit(1);
+        }
+
         cfg.srv = (server_t**)malloc(sizeof(server_t*) * cfg.main.num_of_srv);
 
         for(i = 0; i < cfg.main.num_of_srv; i++)
@@ -404,7 +433,7 @@ int cfg_set_values(char *path)
         strtok_buf = strdup(cfg.main.srv_ent);
         srv_ent = strtok(strtok_buf, ";");
 
-        for(i = 0; srv_ent != NULL; i++)
+        for(i = 0; srv_ent != NULL && i < cfg.main.num_of_srv; i++)
         {
             cfg.srv[i]->name = (char*)malloc((strlen(srv_ent)+1) * sizeof(char));
             snprintf(cfg.srv[i]->name, strlen(srv_ent)+1, "%s", srv_ent);
@@ -461,6 +490,9 @@ int cfg_set_values(char *path)
 
             srv_ent = strtok(NULL, ";");
         }
+
+        free(strtok_buf);
+        strtok_buf = NULL;
     }// if(cfg.main.num_of_srv > 0)
 
     cfg.main.num_of_icy = cfg_get_int("main", "num_of_icy");
@@ -487,6 +519,12 @@ int cfg_set_values(char *path)
             exit(1);
         }
 
+        if(cfg_count_list_entries(cfg.main.icy_ent) != cfg.main.num_of_icy)
+        {
+            fl_alert("%s", _("error while parsing config. The number of main/icy_ent entries does not match num_of_icy.\nbutt is going to close now"));
+            exit(1);
+        }
+
         cfg.icy = (icy_t**)malloc(sizeof(icy_t*) * cfg.main.num_of_icy);
 
         for(i = 0; i < cfg.main.num_of_icy; i++)
@@ -495,7 +533,7 @@ int cfg_set_values(char *path)
         strtok_buf = strdup(cfg.main.icy_ent);
         icy_ent = strtok(strtok_buf, ";");
 
-        for(i = 0; icy_ent != NULL; i++)
+        for(i = 0; icy_ent != NULL && i < cfg.main.num_of_icy; i++)
         {
             cfg.icy[i]->name = (char*)malloc(strlen(icy_ent) * sizeof(char)+1);
             snprintf(cfg.icy[i]->name, strlen(icy_ent)+1, "%s", icy_ent);
