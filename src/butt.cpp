@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
             fl_alert(_("Couldn't create setting file %s\nbutt will close now"), cfg_path);
             return 1;
         }
-        sprintf(info_buf, _("butt created initial configuration on\n%s\n"),
+        snprintf(info_buf, sizeof(info_buf), _("butt created initial configuration on\n%s\n"),
                 cfg_path );
 
         print_info(info_buf, 0);
