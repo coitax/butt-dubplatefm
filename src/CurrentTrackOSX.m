@@ -7,6 +7,7 @@
 //
 
 #import "CurrentTrackOSX.h"
+#include <string.h>
 #import <iTunes.h>
 #import <Spotify.h>
 #import <VOX.h>
@@ -17,8 +18,8 @@ const char* getCurrentTrackFromiTunes() {
     if([iTunes isRunning]) {
         if([iTunes playerState] != iTunesEPlSStopped) {
             NSString* track = [NSString stringWithFormat:@"%@ - %@", [[iTunes currentTrack] name], [[iTunes currentTrack] artist]];
-            ret = (char*) malloc([track length] + 1);
-            [track getCString:ret maxLength:([track length] + 1) encoding:NSUTF8StringEncoding];
+            const char* utf8 = [track UTF8String];
+            if(utf8 != NULL) ret = strdup(utf8);
         }
     }
     
@@ -31,8 +32,8 @@ const char* getCurrentTrackFromSpotify() {
     if([spotify isRunning]) {
         if([spotify playerState] != SpotifyEPlSStopped) {
             NSString* track = [NSString stringWithFormat:@"%@ - %@", [[spotify currentTrack] name], [[spotify currentTrack] artist]];
-            ret = (char*) malloc([track length] + 1);
-            [track getCString:ret maxLength:([track length] + 1) encoding:NSUTF8StringEncoding];
+            const char* utf8 = [track UTF8String];
+            if(utf8 != NULL) ret = strdup(utf8);
         }
     }
     
@@ -45,8 +46,8 @@ const char* getCurrentTrackFromVOX() {
     if([vox isRunning]) {
         if([vox playerState]) {
             NSString* track = [NSString stringWithFormat:@"%@ - %@", [vox track], [vox artist]];
-            ret = (char*) malloc([track length] + 1);
-            [track getCString:ret maxLength:([track length] + 1) encoding:NSUTF8StringEncoding];
+            const char* utf8 = [track UTF8String];
+            if(utf8 != NULL) ret = strdup(utf8);
         }
     }
     
