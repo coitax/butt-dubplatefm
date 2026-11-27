@@ -59,6 +59,7 @@ void send_icy_header(char *key, char *val)
 int sc_connect(void)
 {
     size_t ret;
+    ssize_t recv_len;
     char recv_buf[100];
     char send_buf[100];
     static bool error_printed = 0;
@@ -148,17 +149,17 @@ int sc_connect(void)
     sock_send(&stream_socket, "\r\n\r\n", 4, SEND_TIMEOUT);
 
 
-    if((ret = sock_recv(&stream_socket, recv_buf, sizeof(recv_buf)-1, RECV_TIMEOUT)) == 0)
+    if((recv_len = sock_recv(&stream_socket, recv_buf, sizeof(recv_buf)-1, RECV_TIMEOUT)) <= 0)
     {
         usleep(100*1000);
         sc_disconnect();
         return 1;
     }
 
-    recv_buf[ret] = '\0';
+    recv_buf[recv_len] = '\0';
     
 
-    if( (recv_buf[0] != 'O') || (recv_buf[1] != 'K') || (ret <= 2) )
+    if( (recv_buf[0] != 'O') || (recv_buf[1] != 'K') || (recv_len <= 2) )
     {
         if(strstr(recv_buf, "invalid password") != NULL)
         {
