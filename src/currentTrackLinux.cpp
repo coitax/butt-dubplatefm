@@ -30,6 +30,7 @@ static bool dbus_init(void) {
             return false;
         }
     }
+    return true;
 }
 
 struct DBusMethodCall {
@@ -100,44 +101,83 @@ static bool dbus_call_method(const struct DBusMethodCall* opt, unsigned n, ...) 
 
 static void playbackstatus(void* data, DBusMessageIter* args) {
     DBusMessageIter var;
-    char* str;
+    char* str = NULL;
+    char** value = (char**) data;
+    if(*value != NULL || dbus_message_iter_get_arg_type(args) != DBUS_TYPE_VARIANT) return;
     dbus_message_iter_recurse(args, &var);
+    if(dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_STRING) return;
     dbus_message_iter_get_basic(&var, &str);
-    *((char**) data) = strdup(str);
+    *value = strdup(str);
+}
+
+static char* join_artists(DBusMessageIter* value) {
+    DBusMessageIter list;
+    char* joined;
+    size_t len = 0;
+
+    if(dbus_message_iter_get_arg_type(value) != DBUS_TYPE_ARRAY ||
+       dbus_message_iter_get_element_type(value) != DBUS_TYPE_STRING) {
+        return NULL;
+    }
+
+    joined = (char*) calloc(1, 1);
+    if(joined == NULL) return NULL;
+
+    dbus_message_iter_recurse(value, &list);
+    while(dbus_message_iter_get_arg_type(&list) == DBUS_TYPE_STRING) {
+        const char* str = NULL;
+        dbus_message_iter_get_basic(&list, &str);
+        size_t n = strlen(str);
+        if(n) {
+            size_t sep = len ? 2 : 0;
+            char* grown = (char*) realloc(joined, len + sep + n + 1);
+            if(grown == NULL) {
+                free(joined);
+                return NULL;
+            }
+            joined = grown;
+            if(sep) memcpy(joined + len, ", ", sep);
+            memcpy(joined + len + sep, str, n);
+            len += sep + n;
+            joined[len] = '\0';
+        }
+        dbus_message_iter_next(&list);
+    }
+    return joined;
 }
 
 static void metadata(void* data, DBusMessageIter* args) {
-    DBusMessageIter var, arr, var2, var3, arr2;
-    char* str = NULL;
+    DBusMessageIter var, arr, entry, value;
     char** values = (char**) data;
+
+    if(dbus_message_iter_get_arg_type(args) != DBUS_TYPE_VARIANT) return;
     dbus_message_iter_recurse(args, &var);
+    if(dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_ARRAY ||
+       dbus_message_iter_get_element_type(&var) != DBUS_TYPE_DICT_ENTRY) {
+        return;
+    }
 
     dbus_message_iter_recurse(&var, &arr);
-    do {
-        dbus_message_iter_recurse(&arr, &var2);
-        dbus_message_iter_get_basic(&var2, &str);
-        dbus_message_iter_next(&var2);
-        if(values[1] == NULL && !strcmp("xesam:artist", str)) {
-            dbus_message_iter_recurse(&var2, &var3);
-            dbus_message_iter_recurse(&var3, &arr2);
-            values[1] = (char*) calloc(1, 1);
-            int s = 1, didFirst = 0;
-            do {
-                dbus_message_iter_get_basic(&arr2, &str);
-                if(strlen(str)) {
-                    s += strlen(str) + (didFirst ? 2 : 0);
-                    values[1] = (char*) realloc(values[1], s);
-                    if(didFirst) strcat(values[1], ", ");
-                    strcat(values[1], str);
-                    if(!didFirst) didFirst = 1;
+    while(dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+        const char* key = NULL;
+        dbus_message_iter_recurse(&arr, &entry);
+        if(dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_STRING) {
+            dbus_message_iter_get_basic(&entry, &key);
+            if(dbus_message_iter_next(&entry) &&
+               dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_VARIANT) {
+                dbus_message_iter_recurse(&entry, &value);
+                if(values[1] == NULL && !strcmp("xesam:artist", key)) {
+                    values[1] = join_artists(&value);
+                } else if(values[0] == NULL && !strcmp("xesam:title", key) &&
+                          dbus_message_iter_get_arg_type(&value) == DBUS_TYPE_STRING) {
+                    const char* title = NULL;
+                    dbus_message_iter_get_basic(&value, &title);
+                    values[0] = strdup(title);
                 }
-            } while(dbus_message_iter_next(&arr2));
-        } else if(values[0] == NULL && !strcmp("xesam:title", str)) {
-            dbus_message_iter_recurse(&var2, &var3);
-            dbus_message_iter_get_basic(&var3, &str);
-            values[0] = strdup(str);
+            }
         }
-    } while(dbus_message_iter_next(&arr));
+        dbus_message_iter_next(&arr);
+    }
 }
 
 static char* get_mpris(const char* target) {
@@ -153,6 +193,7 @@ static char* get_mpris(const char* target) {
     };
 
     dbus_init();
+    if(conn == NULL) return NULL;
     if(dbus_bus_name_has_owner(conn, target, &err)) {
         dbus_call_method(&opt, 2, "org.mpris.MediaPlayer2.Player", "PlaybackStatus");
         if(playbackStatusValue != NULL && strcmp(playbackStatusValue, "Stopped")) {
@@ -160,13 +201,22 @@ static char* get_mpris(const char* target) {
             opt.arg_iter = metadata;
             opt.data = values;
             dbus_call_method(&opt, 2, "org.mpris.MediaPlayer2.Player", "Metadata");
-            returnString = (char*) malloc(strlen(values[1]) + 3 + strlen(values[0]) + 1);
-            strcat(returnString, values[1]);
-            strcat(returnString, " - ");
-            strcat(returnString, values[0]);
+            if(values[0] != NULL && values[1] != NULL) {
+                size_t artistLen = strlen(values[1]), titleLen = strlen(values[0]);
+                returnString = (char*) malloc(artistLen + 3 + titleLen + 1);
+                if(returnString != NULL) {
+                    memcpy(returnString, values[1], artistLen);
+                    memcpy(returnString + artistLen, " - ", 3);
+                    memcpy(returnString + artistLen + 3, values[0], titleLen);
+                    returnString[artistLen + 3 + titleLen] = '\0';
+                }
+            }
+            free(values[0]);
+            free(values[1]);
         }
         free(playbackStatusValue);
     }
+    if(dbus_error_is_set(&err)) dbus_error_free(&err);
     return returnString;
 }
 
@@ -186,38 +236,39 @@ const char* getCurrentTrackCantata() {
     return get_mpris("org.mpris.MediaPlayer2.cantata");
 }
 
-const char* getCurrentTrackBanshee() {
-    FILE* p = popen("banshee --query-artist", "r");
-    if(p != NULL) {
-        char buff1[512];
-        memset(buff1, 0, 512);
-        char* bread = fgets(buff1, 512, p);
-        buff1[strlen(buff1) - 1] = '\0';
-        int ret = pclose(p);
-        p = popen("banshee --query-title", "r");
-        if(bread != NULL && ret == 0 && p != NULL) {
-            char buff2[512];
-            memset(buff2, 0, 512);
-            bread = fgets(buff2, 512, p);
-            buff2[strlen(buff2) - 1] = '\0';
-            ret = pclose(p);
+static bool banshee_query(const char* cmd, const char* prefix, char* buff, size_t size) {
+    FILE* p = popen(cmd, "r");
+    if(p == NULL) return false;
+    memset(buff, 0, size);
+    char* bread = fgets(buff, size, p);
+    int ret = pclose(p);
+    if(bread == NULL || ret != 0) return false;
 
-            if(ret == 0 && bread != NULL) {
-                size_t size1 = strlen(buff1) - 8, size2 = strlen(buff2) - 7;
-                char* str = (char*) calloc(1, size1 + size2 + 3 + 1);
-                strcat(str, &buff1[8]);
-                strcat(str, " - ");
-                strcat(str, &buff2[7]);
-                return str;
-            } else {
-                return NULL;
-            }
-        } else {
-            return NULL;
-        }
-    } else {
+    size_t len = strlen(buff);
+    if(len > 0 && buff[len - 1] == '\n') buff[--len] = '\0';
+    return strncmp(buff, prefix, strlen(prefix)) == 0;
+}
+
+const char* getCurrentTrackBanshee() {
+    static const char artistPrefix[] = "artist: ";
+    static const char titlePrefix[] = "title: ";
+    char buff1[512], buff2[512];
+
+    if(!banshee_query("banshee --query-artist", artistPrefix, buff1, sizeof(buff1)) ||
+       !banshee_query("banshee --query-title", titlePrefix, buff2, sizeof(buff2))) {
         return NULL;
     }
+
+    const char* artist = buff1 + strlen(artistPrefix);
+    const char* title = buff2 + strlen(titlePrefix);
+    size_t size1 = strlen(artist), size2 = strlen(title);
+    char* str = (char*) malloc(size1 + 3 + size2 + 1);
+    if(str == NULL) return NULL;
+    memcpy(str, artist, size1);
+    memcpy(str + size1, " - ", 3);
+    memcpy(str + size1 + 3, title, size2);
+    str[size1 + 3 + size2] = '\0';
+    return str;
 }
 
 currentTrackFunction getCurrentTrackFunctionFromId(int i) {
