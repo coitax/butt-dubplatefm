@@ -384,6 +384,7 @@ void button_add_srv_add_cb(void)
     strcpy(cfg.srv[i]->pwd, fl_g->input_add_srv_pwd->value());
 
     cfg.srv[i]->port = atoi(fl_g->input_add_srv_port->value());
+    cfg.srv[i]->ca_file = NULL;
 
     if(fl_g->radio_add_srv_icecast->value())
     {

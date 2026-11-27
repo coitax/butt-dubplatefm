@@ -47,6 +47,7 @@ typedef struct
     char *pwd;
     char *mount;        //mountpoint for icecast server
     char *usr;          //user for icecast server
+    char *ca_file;      //PEM CA bundle used to verify the server's TLS certificate (NULL = system store)
     int port;
     int type;           //SHOUTCAST or ICECAST
 

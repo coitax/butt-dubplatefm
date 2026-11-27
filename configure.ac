@@ -45,6 +45,15 @@ AC_CHECK_LIB([pthread], [pthread_create], [],
 AC_CHECK_LIB([samplerate], [src_new], [],
 		[AC_MSG_ERROR([**** Could not find samplerate     ****])]
 	    )
+AC_CHECK_LIB([crypto], [X509_VERIFY_PARAM_set1_ip_asc], [],
+		[AC_MSG_ERROR([**** Could not find libcrypto (OpenSSL)     ****])]
+	    )
+AC_CHECK_LIB([ssl], [SSL_CTX_set_verify], [],
+		[AC_MSG_ERROR([**** Could not find libssl (OpenSSL)     ****])]
+	    )
+AC_CHECK_HEADER([openssl/ssl.h], [],
+		[AC_MSG_ERROR([**** Could not find openssl/ssl.h     ****])]
+	    )
 
 ## Using MinGW, gettext uses libintl, on others, uses libgettextpo
 case $host_os in
