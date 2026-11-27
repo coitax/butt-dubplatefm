@@ -17,6 +17,12 @@
 #include <string.h>
 #include <limits.h>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
+
 #include "config.h"
 
 #include "cfg.h"
@@ -50,6 +56,40 @@ const char* cfg_get_str_or_default(const char* section, const char* key, const c
     return value == NULL ? def : value;
 }
 
+// The config file holds stream source passwords, so it must only ever be
+// readable by its owner. The mode is fixed on the opened descriptor before
+// anything is written, so it applies to exactly the file that receives the data.
+static FILE *cfg_open_private(const char *path)
+{
+#ifdef _WIN32
+    return fl_fopen(path, "wb");
+#else
+    int fd;
+    struct stat st;
+    FILE *fp;
+
+    fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK, S_IRUSR | S_IWUSR);
+    if(fd < 0)
+        return NULL;
+
+    if(fstat(fd, &st) != 0 ||
+       !S_ISREG(st.st_mode) ||
+       st.st_uid != geteuid() ||
+       fchmod(fd, S_IRUSR | S_IWUSR) != 0 ||
+       ftruncate(fd, 0) != 0)
+    {
+        close(fd);
+        return NULL;
+    }
+
+    fp = fdopen(fd, "wb");
+    if(fp == NULL)
+        close(fd);
+
+    return fp;
+#endif
+}
+
 int cfg_write_file(char *path)
 {
     int i;
@@ -59,7 +99,7 @@ int cfg_write_file(char *path)
     if(path == NULL)
         path = cfg_path;
 
-    cfg_fd = fl_fopen(path, "wb");
+    cfg_fd = cfg_open_private(path);
     if(cfg_fd == NULL)
     {
         snprintf(info_buf, sizeof(info_buf), _("Could not write to file: %s"), path);
@@ -593,7 +633,7 @@ int cfg_create_default(void)
     char *p;
     char def_rec_folder[PATH_MAX];
 
-    cfg_fd = fl_fopen(cfg_path, "wb");
+    cfg_fd = cfg_open_private(cfg_path);
     if(cfg_fd == NULL)
         return 1;
 
