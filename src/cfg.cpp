@@ -50,6 +50,40 @@ const char* cfg_get_str_or_default(const char* section, const char* key, const c
     return value == NULL ? def : value;
 }
 
+// The codec buffers are later overwritten in place with strcpy() by the
+// codec choice callbacks, so they must hold the longest name ("opus"/"flac").
+#define CODEC_BUF_SIZE 5
+
+static const char *audio_codecs[] = { "mp3", "ogg", "opus", "aac", NULL };
+static const char *rec_codecs[] = { "mp3", "ogg", "opus", "aac", "flac", "wav", NULL };
+
+// Returns a newly allocated, NUL terminated copy of value if it is one of the
+// known codec names, otherwise of the default "mp3".
+static char *cfg_codec_dup(const char *value, const char **known)
+{
+    const char *codec = "mp3";
+    char *buf;
+    int i;
+
+    if(value != NULL)
+    {
+        for(i = 0; known[i] != NULL; i++)
+        {
+            if(!strcmp(value, known[i]))
+            {
+                codec = known[i];
+                break;
+            }
+        }
+    }
+
+    buf = (char*)malloc(CODEC_BUF_SIZE);
+    strncpy(buf, codec, CODEC_BUF_SIZE - 1);
+    buf[CODEC_BUF_SIZE - 1] = '\0';
+
+    return buf;
+}
+
 int cfg_write_file(char *path)
 {
     int i;
@@ -293,7 +327,7 @@ int cfg_set_values(char *path)
     cfg.audio.resolution = 16;
     cfg.audio.bitrate    = cfg_get_int("audio", "bitrate");
     cfg.audio.channel    = cfg_get_int("audio", "channel");
-    cfg.audio.codec      = cfg_get_str("audio", "codec");
+    cfg.audio.codec      = cfg_codec_dup(cfg_get_str("audio", "codec"), audio_codecs);
     cfg.audio.buffer_ms  = cfg_get_int("audio", "buffer_ms");
     cfg.audio.pcm_list   = snd_get_devices(&cfg.audio.dev_count);
 
@@ -311,15 +345,6 @@ int cfg_set_values(char *path)
     if(cfg.audio.channel == -1)
         cfg.audio.channel = 2;
 
-
-    if(cfg.audio.codec == NULL)
-    {
-        cfg.audio.codec = (char*)malloc(5*sizeof(char));
-        strcpy(cfg.audio.codec, "mp3");
-    }
-    else //Make sure that also "opus" and "flac" fits into the codec char array
-        cfg.audio.codec = (char*)realloc((char*)cfg.audio.codec, 5*sizeof(char));
-        
     if(cfg.audio.buffer_ms == -1)
         cfg.audio.buffer_ms = 50;
 
@@ -335,7 +360,7 @@ int cfg_set_values(char *path)
     cfg.rec.start_rec  = cfg_get_int("record", "start_rec");
     cfg.rec.sync_to_hour = cfg_get_int("record", "sync_to_hour");
     cfg.rec.split_time = cfg_get_int("record", "split_time");
-    cfg.rec.codec      = cfg_get_str("record", "codec");
+    cfg.rec.codec      = cfg_codec_dup(cfg_get_str("record", "codec"), rec_codecs);
     cfg.rec.filename   = cfg_get_str("record", "filename");
     cfg.rec.folder     = cfg_get_str("record", "folder");
 
@@ -350,14 +375,6 @@ int cfg_set_values(char *path)
 
     if(cfg.rec.split_time == -1)
         cfg.rec.split_time = 0;
-
-    if(cfg.rec.codec == NULL)
-    {
-        cfg.rec.codec = (char*)malloc(5*sizeof(char));
-        strcpy(cfg.rec.codec, "mp3");
-    }
-    else
-        cfg.rec.codec = (char*)realloc(cfg.rec.codec, 5*sizeof(char));
 
     if(cfg.rec.filename == NULL)
     {
