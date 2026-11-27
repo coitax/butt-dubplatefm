@@ -48,6 +48,7 @@ int ic_connect(void)
     int retval;
     int tries = 2;
     int opus_supported = 0;
+    ssize_t recv_len;
     char auth[150];
     char b64_auth[200];
     char recv_buf[250];
@@ -188,7 +189,8 @@ int ic_connect(void)
 
         sock_send(&stream_socket, "\r\n", 2, SEND_TIMEOUT);
 
-        if(sock_recv(&stream_socket, recv_buf, sizeof(recv_buf)-1, RECV_TIMEOUT) == 0)
+        recv_len = sock_recv(&stream_socket, recv_buf, sizeof(recv_buf)-1, RECV_TIMEOUT);
+        if(recv_len <= 0)
         {
             
             if (try_cnt == 0)
@@ -204,10 +206,12 @@ int ic_connect(void)
             }
         }
 
+        recv_buf[recv_len] = '\0';
+
         //We need to extract the HTTP return value from the HTTP response
         //to see if the login was successfull (HTTP/1.0 200 OK)
         http_retval = strchr(recv_buf, ' ');
-        if(http_retval == NULL)
+        if(http_retval == NULL || strlen(http_retval+1) < 3)
         {
             usleep(100000);
             ic_disconnect();
