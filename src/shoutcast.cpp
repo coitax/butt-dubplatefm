@@ -63,13 +63,22 @@ int sc_connect(void)
     char send_buf[100];
     static bool error_printed = 0;
     
-    stream_socket = sock_connect(cfg.srv[cfg.selected_srv]->addr,
-                                 cfg.srv[cfg.selected_srv]->port+1, CONN_TIMEOUT);
+    stream_socket = sock_connect_tls(cfg.srv[cfg.selected_srv]->addr,
+                                     cfg.srv[cfg.selected_srv]->port+1, CONN_TIMEOUT,
+                                     cfg.srv[cfg.selected_srv]->ca_file);
     
     if(stream_socket < 0)
     {
         switch(stream_socket)
         {
+            case SOCK_ERR_TLS:
+                if(!error_printed)
+                {
+                    print_info(_("\nConnect: Could not establish a verified TLS connection"), 1);
+                    error_printed = 1;
+                }
+                ret = 2;
+                break;
             case SOCK_ERR_CREATE:
                 if(!error_printed)
                 {
@@ -198,13 +207,18 @@ int sc_update_song(void)
     char send_buf[1024];
     char *song_buf;
 
-    web_socket = sock_connect(cfg.srv[cfg.selected_srv]->addr,
-                              cfg.srv[cfg.selected_srv]->port, CONN_TIMEOUT);
+    web_socket = sock_connect_tls(cfg.srv[cfg.selected_srv]->addr,
+                                  cfg.srv[cfg.selected_srv]->port, CONN_TIMEOUT,
+                                  cfg.srv[cfg.selected_srv]->ca_file);
 
     if(web_socket < 0)
     {
         switch(web_socket)
         {
+            case SOCK_ERR_TLS:
+                print_info(_("\nUpdate song: Could not establish a verified TLS connection"), 1);
+                ret = 1;
+                break;
             case SOCK_ERR_CREATE:
                 print_info(_("\nUpdate song: Could not create network socket"), 1);
                 ret = 1;

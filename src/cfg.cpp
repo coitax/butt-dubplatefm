@@ -210,13 +210,18 @@ int cfg_write_file(char *path)
         if(cfg.srv[i]->type == ICECAST)
         {
             fprintf(cfg_fd, "mount = %s\n", cfg.srv[i]->mount);
-            fprintf(cfg_fd, "usr = %s\n\n", cfg.srv[i]->usr);
+            fprintf(cfg_fd, "usr = %s\n", cfg.srv[i]->usr);
         }
         else //Shoutcast has no mountpoint and user
         {
             fprintf(cfg_fd, "mount = (none)\n");
-            fprintf(cfg_fd, "usr = (none)\n\n");
+            fprintf(cfg_fd, "usr = (none)\n");
         }
+
+        if(cfg.srv[i]->ca_file != NULL)
+            fprintf(cfg_fd, "ca_file = %s\n", cfg.srv[i]->ca_file);
+
+        fprintf(cfg_fd, "\n");
 
     }
 
@@ -455,6 +460,8 @@ int cfg_set_values(char *path)
                 cfg.srv[i]->usr = (char*)malloc(strlen("source")*sizeof(char)+1);
                 strcpy(cfg.srv[i]->usr, "source");
             }
+
+            cfg.srv[i]->ca_file = cfg_get_str(srv_ent, "ca_file");
 
             if(!strcmp(cfg.srv[i]->name, cfg.main.srv))
                 cfg.selected_srv = i;

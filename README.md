@@ -62,6 +62,15 @@ The command line option `-c <path_to_file>` allows you to define a new standard 
 
 CAUTION: If you use the -c command line option and import another configuration file by using the import function, pressing [Save] will overwrite the file that was passed to the -c option.
 
+Encrypted connections
+---------------------
+butt only sends the source password over TLS, and only after the server's certificate has been verified against a trusted CA and the configured server address (hostname or IP). This applies to the Icecast source login, the Icecast metadata update, the Shoutcast source login (port + 1) and the Shoutcast song update. Plaintext servers and servers with untrusted, expired or mismatching certificates are refused before the password is sent.
+
+- Icecast: enable a TLS listen socket on the server (`<ssl>1</ssl>` together with `<ssl-certificate>`) and use that port in butt.
+- Shoutcast: the legacy Shoutcast source protocol has no encryption of its own. Put a TLS-terminating proxy (for example stunnel) in front of both the source port (port + 1) and the admin port, or switch to a server that accepts encrypted source connections.
+
+By default the system trust store is used (the `SSL_CERT_FILE`/`SSL_CERT_DIR` environment variables are honoured). To trust a private CA or a self-signed server certificate, add `ca_file = /path/to/ca.pem` to the server's section in the configuration file.
+
 
 Main Window
 -----------
