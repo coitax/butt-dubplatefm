@@ -50,6 +50,8 @@
 #include "dsp.hpp"
 
 
+#define BUFFER_MS_MAX 10000
+
 int pa_frames = 2048;
 
 char* encode_buf;
@@ -84,6 +86,45 @@ static char* stream_buf = NULL;
 static char* record_buf = NULL;
 static DSPEffects* dsp = NULL;
 
+// Format the device was opened with. The callback and the resampler use these
+// instead of cfg.audio, which the GUI changes before it reopens the device.
+static int pa_channels = 2;
+static int pa_samplerate = 44100;
+static long resample_out_frames = 0;
+
+static void snd_alloc_resample_bufs(void)
+{
+    size_t in_samples = (size_t)pa_frames * pa_channels;
+
+    // Opus always gets 48kHz, so the converter output for one period
+    // is at most pa_frames * 48000/pa_samplerate frames
+    resample_out_frames = (long)ceil(pa_frames * (48000.0 / pa_samplerate)) + pa_frames;
+    size_t out_samples = (size_t)resample_out_frames * pa_channels;
+
+    srconv_stream.data_in = (float*)malloc(in_samples * sizeof(float));
+    srconv_stream.data_out = (float*)malloc(out_samples * sizeof(float));
+    srconv_record.data_in = (float*)malloc(in_samples * sizeof(float));
+    srconv_record.data_out = (float*)malloc(out_samples * sizeof(float));
+
+    stream_buf = new char[out_samples * sizeof(short)];
+    record_buf = new char[out_samples * sizeof(short)];
+}
+
+static void snd_free_resample_bufs(void)
+{
+    free((void*) srconv_stream.data_in);
+    free(srconv_stream.data_out);
+    free((void*) srconv_record.data_in);
+    free(srconv_record.data_out);
+    srconv_stream.data_in = srconv_record.data_in = NULL;
+    srconv_stream.data_out = srconv_record.data_out = NULL;
+
+    delete[] stream_buf;
+    delete[] record_buf;
+    stream_buf = record_buf = nullptr;
+    resample_out_frames = 0;
+}
+
 int snd_init(void)
 {
     char info_buf[256];
@@ -98,11 +139,6 @@ int snd_init(void)
         ALERT(info_buf);
         return 1;
     }
-
-    srconv_stream.data_in = (float*)malloc(pa_frames*2 * sizeof(float));
-    srconv_stream.data_out = (float*)malloc(pa_frames*2 * 10 * sizeof(float));
-    srconv_record.data_in = (float*)malloc(pa_frames*2 * sizeof(float));
-    srconv_record.data_out = (float*)malloc(pa_frames*2 * 10 * sizeof(float));
 
     reconnect = 0;
     buf_index = 0;
@@ -134,7 +170,17 @@ int snd_open_stream(void)
     }
 
 
-    pa_frames = (cfg.audio.buffer_ms/1000.0)*cfg.audio.samplerate;
+    int buffer_ms = cfg.audio.buffer_ms;
+    if(buffer_ms < 1)
+        buffer_ms = 1;
+    if(buffer_ms > BUFFER_MS_MAX)
+        buffer_ms = BUFFER_MS_MAX;
+
+    pa_frames = (buffer_ms/1000.0)*cfg.audio.samplerate;
+    if(pa_frames < 1)
+        pa_frames = 1;
+
+    pa_channels = cfg.audio.channel;
 
     snd_reset_samplerate_conv(SND_STREAM);
     snd_reset_samplerate_conv(SND_REC);
@@ -199,6 +245,10 @@ int snd_open_stream(void)
         }
     }
 
+    pa_samplerate = samplerate;
+    snd_free_resample_bufs();
+    snd_alloc_resample_bufs();
+
     pa_err = Pa_OpenStream(&stream, &pa_params, NULL,
                             samplerate, pa_frames,
                             paNoFlag, snd_callback, NULL);
@@ -209,9 +259,7 @@ int snd_open_stream(void)
         return 1;
     }
 
-    stream_buf = new char[16 * pa_frames*2 * sizeof(short)];
-    record_buf = new char[16 * pa_frames*2 * sizeof(short)];
-    dsp = new DSPEffects(pa_frames, cfg.audio.channel, samplerate);
+    dsp = new DSPEffects(pa_frames, pa_channels, samplerate);
     
     Pa_StartStream(stream);
     return 0;
@@ -503,12 +551,16 @@ int snd_callback(const void *input,
                  void *userData)
 {
     int samplerate_out;
+    int channels = pa_channels;
     bool convert_stream = false;
     bool convert_record = false;
 
+    // All buffers below hold one period of pa_frames frames
+    if(frameCount > (unsigned long)pa_frames)
+        frameCount = pa_frames;
 
-    memcpy(pa_pcm_buf, input, frameCount*cfg.audio.channel*sizeof(short));
-    samplerate_out = cfg.audio.samplerate;
+    memcpy(pa_pcm_buf, input, frameCount*channels*sizeof(short));
+    samplerate_out = pa_samplerate;
 
     if(dsp->hasToProcessSamples()) {
         dsp->processSamples(pa_pcm_buf);
@@ -516,7 +568,7 @@ int snd_callback(const void *input,
 	
 	if (streaming)
 	{
-        if ((!strcmp(cfg.audio.codec, "opus")) && (cfg.audio.samplerate != 48000))
+        if ((!strcmp(cfg.audio.codec, "opus")) && (pa_samplerate != 48000))
         {
             convert_stream = true;
             samplerate_out = 48000;
@@ -525,21 +577,21 @@ int snd_callback(const void *input,
         if (convert_stream == true)
         {
             srconv_stream.end_of_input = 0;
-            srconv_stream.src_ratio = (float)samplerate_out/cfg.audio.samplerate;
+            srconv_stream.src_ratio = (double)samplerate_out/pa_samplerate;
             srconv_stream.input_frames = frameCount;
-            srconv_stream.output_frames = frameCount*cfg.audio.channel * (srconv_stream.src_ratio+1) * sizeof(float);
+            srconv_stream.output_frames = resample_out_frames;
 
-            src_short_to_float_array((short*)pa_pcm_buf, (float*) srconv_stream.data_in, (int) frameCount*cfg.audio.channel);
+            src_short_to_float_array((short*)pa_pcm_buf, (float*) srconv_stream.data_in, (int) frameCount*channels);
 
             //The actual resample process
             src_process(srconv_state_stream, &srconv_stream);
 
-            src_float_to_short_array(srconv_stream.data_out, (short*)stream_buf, (int) srconv_stream.output_frames_gen*cfg.audio.channel);
+            src_float_to_short_array(srconv_stream.data_out, (short*)stream_buf, (int) srconv_stream.output_frames_gen*channels);
 
-            rb_write(&stream_rb, (char*)stream_buf, (int) srconv_stream.output_frames_gen*sizeof(short)*cfg.audio.channel);
+            rb_write(&stream_rb, (char*)stream_buf, (int) srconv_stream.output_frames_gen*sizeof(short)*channels);
         }
         else
-            rb_write(&stream_rb, (char*)pa_pcm_buf, (int) frameCount*sizeof(short)*cfg.audio.channel);
+            rb_write(&stream_rb, (char*)pa_pcm_buf, (int) frameCount*sizeof(short)*channels);
 
 		pthread_cond_signal(&stream_cond);
 	}
@@ -547,7 +599,7 @@ int snd_callback(const void *input,
 	if(recording)
 	{
 
-        if ((!strcmp(cfg.rec.codec, "opus")) && (cfg.audio.samplerate != 48000))
+        if ((!strcmp(cfg.rec.codec, "opus")) && (pa_samplerate != 48000))
         {
             convert_record = true;
             samplerate_out = 48000;
@@ -556,22 +608,22 @@ int snd_callback(const void *input,
         if (convert_record == true)
         {
             srconv_record.end_of_input = 0;
-            srconv_record.src_ratio = (float)samplerate_out/cfg.audio.samplerate;
+            srconv_record.src_ratio = (double)samplerate_out/pa_samplerate;
             srconv_record.input_frames = frameCount;
-            srconv_record.output_frames = frameCount*cfg.audio.channel * (srconv_record.src_ratio+1) * sizeof(float);
+            srconv_record.output_frames = resample_out_frames;
 
-            src_short_to_float_array((short*)pa_pcm_buf, (float*) srconv_record.data_in, (int) frameCount*cfg.audio.channel);
+            src_short_to_float_array((short*)pa_pcm_buf, (float*) srconv_record.data_in, (int) frameCount*channels);
 
             //The actual resample process
             src_process(srconv_state_record, &srconv_record);
 
-            src_float_to_short_array(srconv_record.data_out, (short*)record_buf, (int) srconv_record.output_frames_gen*cfg.audio.channel);
+            src_float_to_short_array(srconv_record.data_out, (short*)record_buf, (int) srconv_record.output_frames_gen*channels);
 
-            rb_write(&rec_rb, (char*)record_buf, (int) srconv_record.output_frames_gen*sizeof(short)*cfg.audio.channel);
+            rb_write(&rec_rb, (char*)record_buf, (int) srconv_record.output_frames_gen*sizeof(short)*channels);
 
         }
         else
-            rb_write(&rec_rb, (char*)pa_pcm_buf, (int) frameCount*sizeof(short)*cfg.audio.channel);
+            rb_write(&rec_rb, (char*)pa_pcm_buf, (int) frameCount*sizeof(short)*channels);
 
 		pthread_cond_signal(&rec_cond);
 	}
@@ -721,7 +773,7 @@ void snd_reset_samplerate_conv(int rec_or_stream)
             srconv_state_stream = NULL;
         }
 
-        srconv_state_stream = src_new(cfg.audio.resample_mode, cfg.audio.channel, &error);
+        srconv_state_stream = src_new(cfg.audio.resample_mode, pa_channels, &error);
         if (srconv_state_stream == NULL)
         {
             print_info(_("ERROR: Could not initialize samplerate converter"), 0);
@@ -737,7 +789,7 @@ void snd_reset_samplerate_conv(int rec_or_stream)
         }
 
 
-        srconv_state_record = src_new(cfg.audio.resample_mode, cfg.audio.channel, &error);
+        srconv_state_record = src_new(cfg.audio.resample_mode, pa_channels, &error);
         if (srconv_state_record == NULL)
         {
             print_info(_("ERROR: Could not initialize samplerate converter"), 0);
@@ -751,18 +803,11 @@ void snd_close(void)
     Pa_CloseStream(stream);
     Pa_Terminate();
 
-    free((void*) srconv_stream.data_in);
-    free(srconv_stream.data_out);
-
-    free((void*) srconv_record.data_in);
-    free(srconv_record.data_out);
+    snd_free_resample_bufs();
 
     free(pa_pcm_buf);
     free(encode_buf);
 
-    delete[] stream_buf;
-    delete[] record_buf;
-    stream_buf = record_buf = nullptr;
     delete dsp;
     dsp = nullptr;
 }
